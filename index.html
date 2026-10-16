@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Behind the Box Office — Crossfilter Starter</title>
+<link rel="stylesheet" href="https://unpkg.com/dc@4/dist/style/dc.css">
+<style>
+body{font-family:Inter,Arial,sans-serif;background:#f6f8fb;color:#17263b;margin:0}header{background:#14263e;color:white;padding:26px 5vw}header h1{margin:0 0 8px}header p{margin:0;color:#d6e4f1}.wrap{max-width:1250px;margin:24px auto;padding:0 20px}.toolbar{background:white;padding:20px;border-radius:12px;margin-bottom:16px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}.panel{background:#fff;border-radius:12px;padding:20px;min-width:0;box-shadow:0 1px 6px #16283e12}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.panel h2{font-size:16px;margin:0 0 5px}.note{font-size:12px;color:#526375;margin:3px 0 12px}.dc-chart{width:100%;min-height:275px}.dc-chart svg{max-width:100%}button,select{border:1px solid #b9c7d6;border-radius:8px;padding:9px;background:white;color:#17263b}.badge{background:#ecf3fa;border-radius:8px;padding:8px 12px}.tblwrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:10px;border-bottom:1px solid #e5ebf2;text-align:left}th{background:#f1f5fa}.error{color:#a22}@media(max-width:850px){.grid{grid-template-columns:1fr}}</style>
+</head><body><header><h1>Behind the Box Office</h1><p>Interactive movie exploration · Crossfilter + DC.js + D3</p></header>
+<div class="wrap"><div class="toolbar"><label>Production country <select id="country"><option value="All">All countries</option></select></label><span class="badge" id="count">Loading movies...</span><button id="reset">Reset all filters</button><span class="note">Click genre/budget bars; drag on the year chart to filter.</span></div>
+<div class="grid"><section class="panel"><h2>Movie genres</h2><p class="note">Top 10 first-listed genres · number of films</p><div id="genre" class="dc-chart"></div></section>
+<section class="panel"><h2>Release year</h2><p class="note">Drag to select a year range · number of films</p><div id="year" class="dc-chart"></div></section>
+<section class="panel"><h2>Production budget</h2><p class="note">Budget categories, including missing values · number of films</p><div id="budget" class="dc-chart"></div></section>
+<section class="panel"><h2>Box office data coverage</h2><p class="note">Availability of box office records in the currently selected movies</p><div id="coverage" class="dc-chart"></div></section></div>
+<section class="panel" style="margin-top:16px"><h2>Movies matching your filters</h2><p class="note">Shows up to 30 results sorted by worldwide box office, with missing values last</p><div class="tblwrap"><table><thead><tr><th>Film</th><th>Year</th><th>Country</th><th>Genre</th><th>Budget (USD)</th><th>Box office (USD)</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<p class="note">Data: project movies.xls. Multiple genres and countries are simplified only for plotting genre; country filter matches any listed production country. Global box office is not local-market box office. Missing money values are not treated as zero.</p>
+<p id="status" class="error"></p></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/5.16.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crossfilter2/1.5.4/crossfilter.min.js"></script>
+<script src="https://unpkg.com/dc@4/dist/dc.js"></script>
+<script>
+const budgets=['Missing','< $1M','$1–10M','$10–50M','$50–100M','≥ $100M'];
+const budgetBucket=v=>v==null?'Missing':v<1e6?'< $1M':v<1e7?'$1–10M':v<5e7?'$10–50M':v<1e8?'$50–100M':'≥ $100M';
+const money=v=>v==null?'—':new Intl.NumberFormat('en-US',{notation:'compact',maximumFractionDigits:1,style:'currency',currency:'USD'}).format(v);
+const genreFirst=d=>d.genres&&d.genres.length?d.genres[0]:'Unknown';
+fetch('movies_dashboard.csv').then(r=>{if(!r.ok)throw Error('Cannot load CSV; serve folder with a local web server.');return r.text()}).then(csv=>{
+ const rows=d3.csvParse(csv,d=>({film_id:d.film_id,title:d.title,year:d.release_year?+d.release_year:null,budget:d.budget_usd?+d.budget_usd:null,revenue:d.box_office_usd?+d.box_office_usd:null,genres:d.genres?d.genres.split('|'):[],countries:d.countries?d.countries.split('|'):[]}));
+ const facts=crossfilter(rows);
+ const genreDim=facts.dimension(genreFirst), yearDim=facts.dimension(d=>d.year||0), budgetDim=facts.dimension(d=>budgetBucket(d.budget)),coverDim=facts.dimension(d=>d.revenue!=null?'Recorded':'Missing'),countryDim=facts.dimension(d=>d.countries.join('|')), allDim=facts.dimension(d=>d.film_id),all=facts.groupAll();
+ const countries=[...new Set(rows.flatMap(d=>d.countries).filter(Boolean))].sort();let sel=document.getElementById('country');countries.forEach(c=>{let o=document.createElement('option');o.value=c;o.textContent=c;sel.append(o)});
+ sel.addEventListener('change',()=>{const c=sel.value;countryDim.filterAll();if(c!=='All')countryDim.filterFunction(s=>s.split('|').includes(c));dc.redrawAll();update()});
+ const yrVals=rows.map(d=>d.year).filter(y=>y>=1900&&y<=2030),minY=Math.min(...yrVals),maxY=Math.max(...yrVals);
+ const genre=dc.rowChart('#genre');genre.width(520).height(300).dimension(genreDim).group(genreDim.group().reduceCount()).cap(10).elasticX(true).ordering(d=>-d.value).colors(d3.scaleOrdinal().range(['#3578B8'])).label(d=>d.key).title(d=>`${d.key}: ${d.value} films`).margins({top:5,left:10,right:35,bottom:26});
+ const year=dc.barChart('#year');year.width(520).height(300).dimension(yearDim).group(yearDim.group().reduceCount()).x(d3.scaleLinear().domain([minY,maxY+1])).xUnits(dc.units.integers).elasticY(true).brushOn(true).colors('#387DB9').centerBar(true).gap(1).margins({top:12,right:15,bottom:35,left:48}).xAxisLabel('Release year').yAxisLabel('Films');
+ const budget=dc.rowChart('#budget');budget.width(520).height(300).dimension(budgetDim).group(budgetDim.group().reduceCount()).ordering(d=>budgets.indexOf(d.key)).elasticX(true).colors('#4A9E98').margins({top:10,left:10,right:30,bottom:20});
+ const coverage=dc.rowChart('#coverage');coverage.width(520).height(300).dimension(coverDim).group(coverDim.group().reduceCount()).ordering(d=>d.key==='Recorded'?0:1).elasticX(true).colors('#C29457').margins({top:10,left:10,right:30,bottom:20});
+ function update(){document.getElementById('count').textContent=all.value().toLocaleString()+' selected / '+rows.length.toLocaleString()+' movies';let selected=allDim.top(Infinity).sort((a,b)=>(b.revenue??-1)-(a.revenue??-1)).slice(0,30);const tb=document.getElementById('rows');tb.textContent='';selected.forEach(d=>{let tr=document.createElement('tr');[d.title,d.year??'—',d.countries.join(', ')||'—',d.genres.join(', ')||'—',money(d.budget),money(d.revenue)].forEach(v=>{let td=document.createElement('td');td.textContent=v;tr.append(td)});tb.append(tr)})}
+ [genre,year,budget,coverage].forEach(c=>c.on('filtered',update));
+ document.getElementById('reset').onclick=()=>{dc.filterAll();countryDim.filterAll();sel.value='All';dc.redrawAll();update()};
+ dc.renderAll();update();
+}).catch(e=>{console.error('Movie dashboard failed:',e);document.getElementById('count').textContent='Error loading dashboard';document.getElementById('status').textContent=(e.stack || e.message || String(e));});
+</script></body></html>
